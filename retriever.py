@@ -133,6 +133,37 @@ def retrieve_top_k_ast_jaccard(
     return scored_chunks[:k]
 
 
+def retrieve_top_k_raw_jaccard(
+    incomplete_code: str,
+    chunks: list[dict[str, Any]],
+    k: int = 10,
+) -> list[dict[str, Any]]:
+    """Classer les mêmes chunks AST par Jaccard sur le texte brut (`chunk["raw_code"]`),
+    pas sur les identifiants.
+
+    Existe pour comparer, à corpus et fenêtres strictement identiques (celles
+    produites par `ast_chunker`), le signal de retrieval de l'officiel RG1
+    (Jaccard sur tokens bruts, cf. `search_code.SimilarityScore.jaccard_similarity`)
+    contre `retrieve_top_k_ast_jaccard` (Jaccard sur identifiants AST) — la seule
+    variable qui change est le signal de scoring, tout le reste (chunking,
+    anti-fuite, boucle) est partagé.
+    """
+    query_tokens = tokenize_code(incomplete_code)
+
+    scored_chunks = [
+        {
+            "file_path": chunk["file_path"],
+            "line_start": chunk["line_start"],
+            "line_end": chunk["line_end"],
+            "raw_code": chunk["raw_code"],
+            "score": jaccard_similarity(query_tokens, tokenize_code(chunk["raw_code"])),
+        }
+        for chunk in chunks
+    ]
+    scored_chunks.sort(key=lambda item: item["score"], reverse=True)
+    return scored_chunks[:k]
+
+
 def retrieve_top_k_from_directory(
     incomplete_code: str,
     dir_path: str | Path,
