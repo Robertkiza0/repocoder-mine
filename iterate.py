@@ -36,6 +36,7 @@ def run_repocoder_pipeline(
     """
     metadata = record.get("metadata", {})
     repository = metadata.get("repository")
+    task_id = metadata.get("task_id")
     incomplete_code = record["prompt"]
 
     query = last_lines(incomplete_code, window_size)
@@ -43,7 +44,7 @@ def run_repocoder_pipeline(
 
     for _ in range(iterations):
         retrieved_chunks = retrieve_top_k_from_repository(
-            query, repository, repositories_dir, k=k
+            query, repository, repositories_dir, k=k, task_id=task_id
         )
         prompt = build_prompt_from_retrieval(incomplete_code, retrieved_chunks)
         completion = generate(prompt)

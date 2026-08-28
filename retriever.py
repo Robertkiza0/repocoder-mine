@@ -6,6 +6,8 @@ from typing import Any
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from ast_chunker import load_and_chunk_repo_ast_cached
+
 
 def best_snippet(request, snippets):
     vectorizer = TfidfVectorizer()
@@ -30,13 +32,22 @@ def jaccard_similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
 
 
 def retrieve_top_k_jaccard(
-    incomplete_code: str, snippets: list[dict[str, str]], k: int = 10
+    incomplete_code: str,
+    snippets: list[dict[str, str]],
+    k: int = 10,
+    exclude_task_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Classer les blocs de code par indice de Jaccard avec le code incomplet.
 
     Compare le sac de tokens du code incomplet à celui de chaque bloc
     (`{"file", "snippet"}`) et retourne les k meilleurs
     `{"file", "snippet", "score"}`, triés par score décroissant.
+
+    `exclude_task_id`, si fourni, écarte les snippets extraits de cette
+    tâche : leur `right_context` contient la suite réelle du code à
+    compléter (voir `dataset.extract_repository_snippets`), donc les
+    inclure dans la recherche pour cette même tâche fuiterait le
+    groundtruth.
     """
     query_tokens = tokenize_code(incomplete_code)
 
@@ -47,6 +58,7 @@ def retrieve_top_k_jaccard(
             "score": jaccard_similarity(query_tokens, tokenize_code(snippet["snippet"])),
         }
         for snippet in snippets
+        if exclude_task_id is None or snippet.get("task_id") != exclude_task_id
     ]
     scored_snippets.sort(key=lambda item: item["score"], reverse=True)
     return scored_snippets[:k]
@@ -64,7 +76,13 @@ def load_repository_snippets(
         for line in file:
             if line.strip():
                 record = json.loads(line)
-                snippets.append({"file": record.get("file"), "snippet": record["snippet"]})
+                snippets.append(
+                    {
+                        "file": record.get("file"),
+                        "snippet": record["snippet"],
+                        "task_id": record.get("task_id"),
+                    }
+                )
     return snippets
 
 
@@ -73,10 +91,58 @@ def retrieve_top_k_from_repository(
     repository: str,
     repositories_dir: str | Path,
     k: int = 10,
+    task_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Charger les blocs de code d'un dépôt puis retourner les k meilleurs (Jaccard)."""
+    """Charger les blocs de code d'un dépôt puis retourner les k meilleurs (Jaccard).
+
+    `task_id`, si fourni, exclut les snippets provenant de cette même tâche
+    (voir `retrieve_top_k_jaccard`).
+    """
     snippets = load_repository_snippets(repository, repositories_dir)
-    return retrieve_top_k_jaccard(incomplete_code, snippets, k=k)
+    return retrieve_top_k_jaccard(incomplete_code, snippets, k=k, exclude_task_id=task_id)
+
+
+def retrieve_top_k_ast_jaccard(
+    incomplete_code: str,
+    chunks: list[dict[str, Any]],
+    k: int = 10,
+) -> list[dict[str, Any]]:
+    """Classer des chunks AST (ast_chunker.chunk_file_ast/load_and_chunk_repo_ast)
+    par indice de Jaccard entre le code incomplet et les identifiants de chaque
+    fenêtre.
+
+    Contrairement à `retrieve_top_k_jaccard`, qui compare le sac de tokens bruts
+    du texte, la comparaison se fait ici contre `chunk["identifiers"]` : les
+    noms de classes/fonctions/attributs/variables hérités des blocs AST
+    (imports du module + tout bloc classe/fonction chevauchant la fenêtre) —
+    docstrings et commentaires exclus.
+    """
+    query_tokens = tokenize_code(incomplete_code)
+
+    scored_chunks = [
+        {
+            "file_path": chunk["file_path"],
+            "line_start": chunk["line_start"],
+            "line_end": chunk["line_end"],
+            "raw_code": chunk["raw_code"],
+            "score": jaccard_similarity(query_tokens, set(chunk["identifiers"])),
+        }
+        for chunk in chunks
+    ]
+    scored_chunks.sort(key=lambda item: item["score"], reverse=True)
+    return scored_chunks[:k]
+
+
+def retrieve_top_k_from_directory(
+    incomplete_code: str,
+    dir_path: str | Path,
+    k: int = 10,
+) -> list[dict[str, Any]]:
+    """Découper tous les fichiers .py d'un dossier avec ast_chunker (mis en cache
+    sur disque, voir `ast_chunker.load_and_chunk_repo_ast_cached`) puis retourner
+    les k meilleurs chunks (Jaccard sur identifiants AST)."""
+    chunks = load_and_chunk_repo_ast_cached(str(dir_path))
+    return retrieve_top_k_ast_jaccard(incomplete_code, chunks, k=k)
 
 
 def retrieve_top_k_for_dataset(
@@ -107,10 +173,16 @@ def retrieve_top_k_for_dataset(
         if repository not in repository_index:
             snippets = load_repository_snippets(repository, repositories_dir)
             repository_index[repository] = [
-                {"file": snippet["file"], "snippet": snippet["snippet"], "tokens": tokenize_code(snippet["snippet"])}
+                {
+                    "file": snippet["file"],
+                    "snippet": snippet["snippet"],
+                    "task_id": snippet.get("task_id"),
+                    "tokens": tokenize_code(snippet["snippet"]),
+                }
                 for snippet in snippets
             ]
 
+        task_id = metadata.get("task_id")
         query = record["prompt"] if query_lines is None else last_lines(record["prompt"], query_lines)
         query_tokens = tokenize_code(query)
         scored_snippets = [
@@ -120,6 +192,7 @@ def retrieve_top_k_for_dataset(
                 "score": jaccard_similarity(query_tokens, snippet["tokens"]),
             }
             for snippet in repository_index[repository]
+            if snippet.get("task_id") != task_id
         ]
         scored_snippets.sort(key=lambda item: item["score"], reverse=True)
 
