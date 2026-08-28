@@ -1,0 +1,16 @@
+groq
+python-dotenv
+scikit-learn
+requests
+thefuzz
+pydantic
+tree-sitter
+tree-sitter-python
+tree-sitter-java
+tree-sitter-c-sharp
+tree-sitter-typescript
+
+# Optional, only needed for --backend huggingface
+# torch
+# transformers
+# accelerate

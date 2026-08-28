@@ -1,0 +1,11 @@
+openai
+pydantic
+python-dotenv
+thefuzz
+tqdm
+transformers
+tree-sitter
+tree-sitter-c-sharp
+tree-sitter-java
+tree-sitter-python
+tree-sitter-typescript
