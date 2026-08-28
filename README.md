@@ -109,12 +109,6 @@ mid-run doesn't lose already-generated completions.
 
 ## Known limitations
 
-- **`exact_match` is almost always `False`**: `call_model_api` returns the
-  raw multi-line continuation, while CCEval's `groundtruth` is a single
-  line. `edit_similarity` and `identifier_f1` (from `cceval.metrics`,
-  post-processed to the first completed statement) are the meaningful
-  metrics here; truncating the raw completion to its first line before
-  comparing would make `exact_match` meaningful too.
 - **Groq free tier** has both a per-minute and a per-day token limit —
   large `SAMPLE_SIZE` runs can hit `RateLimitError` (429) partway through.
 - The Jaccard retriever can only surface code that already exists elsewhere
