@@ -47,6 +47,15 @@ class ASTContextAnalyzer:
 # 2. AGENT LLM MONO-TOUR (Single-Turn Agent)
 # ==========================================
 class SingleTurnCodeAgent:
+    SYSTEM_PROMPT = (
+        "Vous êtes un assistant de complétion de code en temps réel pour IDE.\n"
+        "Analyse le code incomplet et utilise les exemples du dépôt pour prédire la suite.\n"
+        "Règles strictes :\n"
+        "1. Utilise en priorité les variables locales actives et les fonctions importées.\n"
+        "2. N'invente pas de nouvelles signatures si des fonctions équivalentes existent dans les exemples.\n"
+        "3. Génère UNIQUEMENT le code de complétion venant immédiatement après le curseur."
+    )
+
     def __init__(self, llm_client, model_name: str = "qwen2.5-coder-7b"):
         """
         llm_client: Le client LLM (ex: OpenAI, Ollama, vLLM, HuggingFace)
@@ -105,19 +114,10 @@ ACTIVE SCOPE VARIABLES:
             target_file_path, unfinished_code, retrieved_chunks
         )
 
-        system_prompt = (
-            "Vous êtes un assistant de complétion de code en temps réel pour IDE.\n"
-            "Analyse le code incomplet et utilise les exemples du dépôt pour prédire la suite.\n"
-            "Règles strictes :\n"
-            "1. Utilise en priorité les variables locales actives et les fonctions importées.\n"
-            "2. N'invente pas de nouvelles signatures si des fonctions équivalentes existent dans les exemples.\n"
-            "3. Génère UNIQUEMENT le code de complétion venant immédiatement après le curseur."
-        )
-
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": self.SYSTEM_PROMPT},
                 {"role": "user", "content": structured_prompt}
             ],
             temperature=0.2,
