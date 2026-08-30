@@ -14,6 +14,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+import tree_sitter_python as tspython
+from tree_sitter import Language, Parser
+
+_PY_LANGUAGE = Language(tspython.language())
+_PARSER = Parser(_PY_LANGUAGE)
+
 
 def load_license_map(path: str | Path) -> dict[str, str]:
     """{"owner-repo": "owner/repo"} à partir de LICENSES/project_license_map.txt."""
@@ -88,6 +94,67 @@ def normalize_cceval_tasks(
     if skipped:
         print(f"{skipped} tâche(s) ignorée(s) (dépôt non résolu vers un owner/repo GitHub)")
     return normalized
+
+
+def _get_index(lines: list[str], point: tuple) -> int:
+    return sum(len(lines[i]) for i in range(point[0])) + point[1]
+
+
+def postprocess_completion(prompt: str, completion: str) -> str:
+    """Coupe une complétion brute à la fin de la PREMIÈRE instruction complète,
+    exactement comme le harnais officiel CCEval (cceval/metrics.py:
+    _cut_first_statement_completion) — sans ça, une complétion de 64 tokens
+    déborde largement au-delà du vrai point de complétion (plusieurs lignes/
+    instructions en plus), et une comparaison brute (EM/ES) sous-estime
+    massivement la qualité réelle de la génération.
+
+    Si aucune instruction complète n'est trouvée (complétion tronquée en plein
+    milieu), retourne la complétion telle quelle.
+    """
+    if len(completion.strip()) == 0:
+        return completion
+
+    # seulement les ~10 dernières lignes du prompt pour le parsing (comme l'officiel)
+    line_idx = 10
+    prompt_tail = "".join(prompt.splitlines(keepends=True)[-line_idx:])
+    while '"""' in prompt_tail or "'''" in prompt_tail:
+        line_idx -= 1
+        if line_idx <= 0:
+            return completion
+        prompt_tail = "".join(prompt.splitlines(keepends=True)[-line_idx:])
+
+    text = prompt_tail + completion
+    lines = text.splitlines(keepends=True)
+    tree = _PARSER.parse(text.encode("utf8"))
+    node = tree.root_node
+
+    while node:
+        if _get_index(lines, node.start_point) > len(prompt_tail):
+            return completion
+        if _get_index(lines, node.end_point) <= len(prompt_tail):
+            return completion
+        if node.type.endswith("_statement"):
+            if node.type not in [
+                "for_statement", "if_statement", "with_statement",
+                "while_statement", "try_statement", "match_statement",
+            ]:
+                break
+        if node.type in ("argument_list", "parameters", "case_pattern", "attribute", "comparison_operator"):
+            break
+        if len(node.children) == 0:
+            break
+        next_node = None
+        for child in node.children:
+            start_index = _get_index(lines, child.start_point)
+            end_index = _get_index(lines, child.end_point)
+            if start_index <= len(prompt_tail) and end_index > len(prompt_tail):
+                next_node = child
+                break
+        if next_node is None:
+            break
+        node = next_node
+
+    return text[len(prompt_tail):_get_index(lines, node.end_point)]
 
 
 def filter_safe_chunks_cceval(chunks: list[dict[str, Any]], repo_dir, fpath_tuple: list[str]) -> list[dict[str, Any]]:
